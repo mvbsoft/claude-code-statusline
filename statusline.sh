@@ -14,12 +14,12 @@ seven_day_pct=""
 if [ -n "$raw" ] && command -v jq &>/dev/null; then
     cwd=$(echo "$raw" | jq -r '.workspace.current_dir // .cwd // empty' 2>/dev/null)
     model_name=$(echo "$raw" | jq -r '.model.display_name // empty' 2>/dev/null)
-    thinking_enabled=$(echo "$raw" | jq -r '.thinking.enabled // "false"' 2>/dev/null)
+    thinking_enabled=$(echo "$raw" | jq -r 'if .thinking.enabled == true then "true" else "false" end' 2>/dev/null)
     session_cost=$(echo "$raw" | jq -r '.cost.total_cost_usd // empty' 2>/dev/null)
-    current_tokens=$(echo "$raw" | jq -r '.context_window.total_input_tokens // empty' 2>/dev/null)
-    max_tokens=$(echo "$raw" | jq -r '.context_window.context_window_size // 200000' 2>/dev/null)
-    five_hour_pct=$(echo "$raw" | jq -r '.rate_limits.five_hour.used_percentage // empty' 2>/dev/null)
-    seven_day_pct=$(echo "$raw" | jq -r '.rate_limits.seven_day.used_percentage // empty' 2>/dev/null)
+    current_tokens=$(echo "$raw" | jq -r 'if .context_window.total_input_tokens then (.context_window.total_input_tokens | floor | tostring) else empty end' 2>/dev/null)
+    max_tokens=$(echo "$raw" | jq -r '(.context_window.context_window_size // 200000) | floor' 2>/dev/null)
+    five_hour_pct=$(echo "$raw" | jq -r 'if .rate_limits.five_hour.used_percentage then (.rate_limits.five_hour.used_percentage | floor | tostring) else empty end' 2>/dev/null)
+    seven_day_pct=$(echo "$raw" | jq -r 'if .rate_limits.seven_day.used_percentage then (.rate_limits.seven_day.used_percentage | floor | tostring) else empty end' 2>/dev/null)
 fi
 
 [ -z "$cwd" ] && cwd=$(pwd)
@@ -52,15 +52,19 @@ format_bar() {
     echo "$bar"
 }
 
+join_by() {
+    local sep="$1"; shift
+    local result=""
+    for item in "$@"; do
+        [ -z "$result" ] && result="$item" || result="${result}${sep}${item}"
+    done
+    echo "$result"
+}
+
 parts=()
 
-if [ -n "$cwd" ]; then
-    parts+=("📁 $(basename "$cwd")")
-fi
-
-if [ -n "$branch" ]; then
-    parts+=("🌿 $branch")
-fi
+[ -n "$cwd" ] && parts+=("📁 $(basename "$cwd")")
+[ -n "$branch" ] && parts+=("🌿 $branch")
 
 if [ -n "$model_name" ]; then
     model_part="🤖 $model_name"
@@ -68,8 +72,7 @@ if [ -n "$model_name" ]; then
     cur_str="-"
     [ -n "$current_tokens" ] && cur_str=$(format_tokens "$current_tokens")
     max_str=$(format_tokens "$max_tokens")
-    model_part="$model_part ($cur_str/$max_str)"
-    parts+=("$model_part")
+    parts+=("$model_part ($cur_str/$max_str)")
 fi
 
 rate_parts=()
@@ -77,8 +80,7 @@ rate_parts=()
 [ -n "$seven_day_pct" ] && rate_parts+=("📊 1w (${seven_day_pct}%) $(format_bar "$seven_day_pct")")
 
 if [ "${#rate_parts[@]}" -gt 0 ]; then
-    rate_line=$(printf '%s  ' "${rate_parts[@]}")
-    rate_line="${rate_line%  }"
+    rate_line=$(join_by "  " "${rate_parts[@]}")
     if [ -n "$five_hour_pct" ] && [ "$five_hour_pct" -ge 100 ] 2>/dev/null; then
         cost_str=""
         [ -n "$session_cost" ] && cost_str=" \$$(printf '%.2f' "$session_cost")"
@@ -87,6 +89,4 @@ if [ "${#rate_parts[@]}" -gt 0 ]; then
     parts+=("$rate_line")
 fi
 
-if [ "${#parts[@]}" -gt 0 ]; then
-    printf '%s\n' "$(IFS=' | '; echo "${parts[*]}")"
-fi
+[ "${#parts[@]}" -gt 0 ] && echo "$(join_by ' | ' "${parts[@]}")"
